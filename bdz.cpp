@@ -3,17 +3,18 @@
 #include <string>
 #include <iostream>
 #include <thread>
-#include <mutex>
 #include <vector>
+#include <Windows.h>
 #include "cbmp.h"
-
-std::mutex mtx;
 
 std::vector<std::vector<std::vector<size_t>>> pixels; // each subvector is pixels row that holds array of 3 values (R, G, B)
 size_t width, height; // width and height of the image
 
-size_t THREADS_COUNT = 10;
+const int THREADS_COUNT = 10;
 size_t rCount = 0, gCount = 0, bCount = 0;
+
+HANDLE hThreads[THREADS_COUNT];
+DWORD threadIds[THREADS_COUNT];
 
 void readBMP() {
     std::string filename = "red.bmp";
@@ -28,7 +29,6 @@ void readBMP() {
 
         for (int y = height - 1; y >= 0; --y)
         {
-            // Gets pixel rgb values at point (x, y)
             get_pixel_rgb(bmp, x, y, &r, &g, &b);
             std::vector<size_t> pixel = { r, g, b };
             pixelsRow.push_back(pixel);
@@ -42,38 +42,43 @@ void readBMP() {
     bclose(bmp);
 }
 
+struct ThreadFunctionArgs {
+    int threadId;
+    size_t widthStart;
+    size_t widthEnd;
+    size_t heightStart;
+    size_t heightEnd;
+};
 
-// this function is used as a thread function
-void countRGB(
-    size_t widthStart, size_t widthEnd,
-    size_t heightStart, size_t heightEnd)
-{
-    for (auto x = widthStart; x < widthEnd; x++)
+
+DWORD WINAPI ThreadFunction(void* arg) {
+    ThreadFunctionArgs* structArgs = (struct ThreadFunctionArgs*)arg;
+
+    //std::cout << "Thread ID: " << structArgs->threadId << std::endl;
+
+    for (auto x = structArgs->widthStart; x < structArgs->widthEnd; x++)
     {
-        for (auto y = heightStart; y < heightEnd; y++)
+        for (auto y = structArgs->heightStart; y < structArgs->heightEnd; y++)
         {
-
             auto r = pixels[x][y][0];
             auto g = pixels[x][y][1];
             auto b = pixels[x][y][2];
 
-            mtx.lock();
-
             if (int(r) >= int(g) && int(r) >= int(b)) {
-                ++rCount;
+                InterlockedIncrement(&rCount);
             }
             else if (int(g) >= int(r) && int(g) >= int(b)) {
-                ++gCount;
+                InterlockedIncrement(&gCount);
             }
             else if (int(b) >= int(r) && int(b) >= int(g)) {
-                ++bCount;
+                InterlockedIncrement(&bCount);
             }
             else {
                 // do nothing
             }
-            mtx.unlock();
         }
     }
+    return 0;
 }
 
 int main(int argc, char** argv)
@@ -81,8 +86,6 @@ int main(int argc, char** argv)
     readBMP();
 
     auto colStep = std::floor(width / THREADS_COUNT);
-    std::vector<std::thread> threads;
-
     auto remainder = std::remainder(width, THREADS_COUNT);
 
     for (auto i = 0; i < THREADS_COUNT; ++i) {
@@ -93,11 +96,35 @@ int main(int argc, char** argv)
             end += remainder;
         }
 
-        threads.push_back(std::thread(countRGB, start, end, 0, height));
+        int threadId = i + 1;
+        threadIds[i] = threadId;
+
+        ThreadFunctionArgs* threadFunctionArgs = new ThreadFunctionArgs();
+
+        threadFunctionArgs->threadId = threadId;
+        threadFunctionArgs->widthStart = start;
+        threadFunctionArgs->widthEnd = end;
+        threadFunctionArgs->heightStart = 0;
+        threadFunctionArgs->heightEnd = height;
+
+        //std::cout << "Inside loop: " << threadFunctionArgs.threadId << std::endl;
+
+
+        hThreads[i] = CreateThread(NULL, 0, ThreadFunction, threadFunctionArgs, 0, &threadIds[i]);
+
+        if (hThreads[i] == NULL)
+        {
+            std::cerr << "Failed to create thread " << i << std::endl;
+            return 1; // Handle the error accordingly
+        }
     }
 
-    for (auto& thread : threads) {
-        thread.join();
+    // Wait for all threads to finish
+    WaitForMultipleObjects(THREADS_COUNT, hThreads, TRUE, INFINITE);
+
+    for (int i = 0; i < THREADS_COUNT; ++i)
+    {
+        CloseHandle(hThreads[i]);
     }
 
     std::cout << "R = " << rCount << std::endl;
