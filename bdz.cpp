@@ -1,13 +1,12 @@
+#include <omp.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string>
 #include <iostream>
 #include <thread>
-#include <mutex>
 #include <vector>
+#include <cmath>
 #include "cbmp.h"
-
-std::mutex mtx;
 
 std::vector<std::vector<std::vector<size_t>>> pixels; // each subvector is pixels row that holds array of 3 values (R, G, B)
 size_t width, height; // width and height of the image
@@ -42,62 +41,52 @@ void readBMP() {
     bclose(bmp);
 }
 
-
-// this function is used as a thread function
-void countRGB(
-    size_t widthStart, size_t widthEnd,
-    size_t heightStart, size_t heightEnd)
-{
-    for (auto x = widthStart; x < widthEnd; x++)
-    {
-        for (auto y = heightStart; y < heightEnd; y++)
-        {
-
-            auto r = pixels[x][y][0];
-            auto g = pixels[x][y][1];
-            auto b = pixels[x][y][2];
-
-            mtx.lock();
-
-            if (int(r) >= int(g) && int(r) >= int(b)) {
-                ++rCount;
-            }
-            else if (int(g) >= int(r) && int(g) >= int(b)) {
-                ++gCount;
-            }
-            else if (int(b) >= int(r) && int(b) >= int(g)) {
-                ++bCount;
-            }
-            else {
-                // do nothing
-            }
-            mtx.unlock();
-        }
-    }
-}
-
 int main(int argc, char** argv)
 {
     readBMP();
 
     auto colStep = std::floor(width / THREADS_COUNT);
-    std::vector<std::thread> threads;
+    auto remainder = width % THREADS_COUNT;
 
-    auto remainder = std::remainder(width, THREADS_COUNT);
+    #pragma omp parallel num_threads(THREADS_COUNT)
+    {
+        #pragma omp for
+        for (auto i = 0; i < THREADS_COUNT; ++i) {
+            auto start = i * colStep;
+            auto end = (i + 1) * colStep;
+    
+            if (i == THREADS_COUNT - 1) {
+                end += remainder;
+            }
+    
+            for (auto x = start; x < end; x++)
+            {
+                for (auto y = 0; y < height; y++)
+                {
+                    #pragma omp critical
+                    {
+                        auto r = pixels[x][y][0];
+                        auto g = pixels[x][y][1];
+                        auto b = pixels[x][y][2];
 
-    for (auto i = 0; i < THREADS_COUNT; ++i) {
-        auto start = i * colStep;
-        auto end = (i + 1) * colStep;
 
-        if (i == THREADS_COUNT - 1) {
-            end += remainder;
+                        if (int(r) >= int(g) && int(r) >= int(b)) {
+                            ++rCount;
+                        }
+                        else if (int(g) >= int(r) && int(g) >= int(b)) {
+                            ++gCount;
+                        }
+                        else if (int(b) >= int(r) && int(b) >= int(g)) {
+                            ++bCount;
+                        }
+                        else {
+                            // do nothing
+                        }
+                    }
+
+                }
+            }
         }
-
-        threads.push_back(std::thread(countRGB, start, end, 0, height));
-    }
-
-    for (auto& thread : threads) {
-        thread.join();
     }
 
     std::cout << "R = " << rCount << std::endl;

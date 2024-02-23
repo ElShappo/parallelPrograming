@@ -127,7 +127,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="bdz.cpp" />
+    <ClCompile Include="bdz.cpp">
+      <OpenMPSupport Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</OpenMPSupport>
+      <OpenMPSupport Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</OpenMPSupport>
+    </ClCompile>
     <ClCompile Include="cbmp.c" />
   </ItemGroup>
   <ItemGroup>
