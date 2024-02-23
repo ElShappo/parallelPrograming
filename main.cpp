@@ -5,6 +5,7 @@
 #include <thread>
 #include <mutex>
 #include <vector>
+#include <cmath>
 #include "cbmp.h"
 
 std::mutex mtx;
@@ -83,7 +84,7 @@ int main(int argc, char** argv)
     auto colStep = std::floor(width / THREADS_COUNT);
     std::vector<std::thread> threads;
 
-    auto remainder = std::remainder(width, THREADS_COUNT);
+    auto remainder = width % THREADS_COUNT;
 
     for (auto i = 0; i < THREADS_COUNT; ++i) {
         auto start = i * colStep;
