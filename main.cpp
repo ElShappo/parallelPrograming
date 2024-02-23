@@ -2,20 +2,19 @@
 #include <stdio.h>
 #include <string>
 #include <iostream>
-#include <thread>
 #include <vector>
-#include <pthread.h>
+#include <unistd.h>
+#include <sys/wait.h>
 #include <cmath>
 #include "cbmp.h"
 
 std::vector<std::vector<std::vector<size_t>>> pixels; // each subvector is a pixels row vector that in turn is also a vector storing 3 values (R, G, B)
 size_t width, height; // width and height of the image
 
-const int THREADS_COUNT = 10;
+const int PROCESSES_COUNT = 10;
 size_t rCount = 0, gCount = 0, bCount = 0;
 
-pthread_t threads[THREADS_COUNT];
-int threadIds[THREADS_COUNT];
+int threadIds[PROCESSES_COUNT];
 pthread_mutex_t mutex;
 
 void readBMP() {
@@ -44,7 +43,7 @@ void readBMP() {
     bclose(bmp);
 }
 
-struct ThreadFunctionArgs {
+struct ProcessFunctionArgs {
     int threadId;
     size_t widthStart;
     size_t widthEnd;
@@ -53,17 +52,13 @@ struct ThreadFunctionArgs {
 };
 
 
-void* ThreadFunction(void* arg) {
-    ThreadFunctionArgs* structArgs = (struct ThreadFunctionArgs*)arg;
-
+void* ProcessFunction(ProcessFunctionArgs* structArgs) {
     std::cout << "Thread ID: " << structArgs->threadId << std::endl;
 
     for (auto x = structArgs->widthStart; x < structArgs->widthEnd; x++)
     {
         for (auto y = structArgs->heightStart; y < structArgs->heightEnd; y++)
         {
-            pthread_mutex_lock(&mutex);
-
             auto r = pixels[x][y][0];
             auto g = pixels[x][y][1];
             auto b = pixels[x][y][2];
@@ -80,8 +75,6 @@ void* ThreadFunction(void* arg) {
             else {
                 // do nothing
             }
-
-            pthread_mutex_unlock(&mutex);
         }
     }
     return 0;
@@ -91,49 +84,44 @@ int main(int argc, char** argv)
 {
     readBMP();
 
-    pthread_mutex_init(&mutex, NULL);
+    auto colStep = std::floor(width / PROCESSES_COUNT);
+    auto remainder = width % PROCESSES_COUNT;
 
-    auto colStep = std::floor(width / THREADS_COUNT);
-    auto remainder = width % THREADS_COUNT;
+    for (int i = 0; i < PROCESSES_COUNT; i++) {
+        pid_t pid = fork();
 
-    for (auto i = 0; i < THREADS_COUNT; ++i) {
         auto start = i * colStep;
         auto end = (i + 1) * colStep;
 
-        if (i == THREADS_COUNT - 1) {
+        if (i == PROCESSES_COUNT - 1) {
             end += remainder;
         }
 
         int threadId = i + 1;
-        threadIds[i] = threadId;
 
-        ThreadFunctionArgs* threadFunctionArgs = new ThreadFunctionArgs();
+        ProcessFunctionArgs* processFunctionArgs = new ProcessFunctionArgs();
 
-        threadFunctionArgs->threadId = threadId;
-        threadFunctionArgs->widthStart = start;
-        threadFunctionArgs->widthEnd = end;
-        threadFunctionArgs->heightStart = 0;
-        threadFunctionArgs->heightEnd = height;
+        processFunctionArgs->threadId = threadId;
+        processFunctionArgs->widthStart = start;
+        processFunctionArgs->widthEnd = end;
+        processFunctionArgs->heightStart = 0;
+        processFunctionArgs->heightEnd = height;
 
-        //std::cout << "Inside loop: " << threadFunctionArgs.threadId << std::endl;
+        ProcessFunction(processFunctionArgs);
 
-        int threadCreateResult = pthread_create(&threads[i], NULL, &ThreadFunction, threadFunctionArgs);
-
-        if (threadCreateResult != 0) {
-            std::cerr << "Failed to create thread " << i << std::endl;
-            return 1;
-        }
-    }
-
-    for (int i = 0; i < THREADS_COUNT; ++i) {
-        int threadJoinResult = pthread_join(threads[i], NULL);
-        if (threadJoinResult != 0) {
-            std::cerr << "Failed to join thread " << i << std::endl;
+        if (pid == -1) {
+            std::cerr << "Failed to create child process " << i << std::endl;
             return 1; // Handle the error accordingly
+        } else if (pid == 0) {
+            // Child process logic
+            std::cout << "Hello from child process " << getpid() << std::endl;
+            return 0; // Terminate the child process
         }
     }
 
-    pthread_mutex_destroy(&mutex);
+    for (int i = 0; i < PROCESSES_COUNT; i++) {
+        wait(nullptr);
+    }
 
     std::cout << "R = " << rCount << std::endl;
     std::cout << "G = " << gCount << std::endl;
