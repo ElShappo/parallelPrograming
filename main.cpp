@@ -14,9 +14,6 @@ size_t width, height; // width and height of the image
 const int PROCESSES_COUNT = 10;
 size_t rCount = 0, gCount = 0, bCount = 0;
 
-int threadIds[PROCESSES_COUNT];
-pthread_mutex_t mutex;
-
 void readBMP() {
     std::string filename = "red.bmp";
     BMP* bmp = bopen((char*)filename.c_str());
@@ -90,6 +87,15 @@ int main(int argc, char** argv)
     for (int i = 0; i < PROCESSES_COUNT; i++) {
         pid_t pid = fork();
 
+        if (pid == -1) {
+            std::cerr << "Failed to create child process " << i << std::endl;
+            return 1; // Handle the error accordingly
+        } else if (pid == 0) {
+            // Child process logic
+            std::cout << "Hello from child process " << getpid() << std::endl;
+            return 0; // Terminate the child process
+        }
+
         auto start = i * colStep;
         auto end = (i + 1) * colStep;
 
@@ -108,15 +114,6 @@ int main(int argc, char** argv)
         processFunctionArgs->heightEnd = height;
 
         ProcessFunction(processFunctionArgs);
-
-        if (pid == -1) {
-            std::cerr << "Failed to create child process " << i << std::endl;
-            return 1; // Handle the error accordingly
-        } else if (pid == 0) {
-            // Child process logic
-            std::cout << "Hello from child process " << getpid() << std::endl;
-            return 0; // Terminate the child process
-        }
     }
 
     for (int i = 0; i < PROCESSES_COUNT; i++) {
