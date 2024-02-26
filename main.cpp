@@ -6,13 +6,14 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <cmath>
+#include <cstring>
+#include <signal.h>
 #include "cbmp.h"
 
 std::vector<std::vector<std::vector<size_t>>> pixels; // each subvector is a pixels row vector that in turn is also a vector storing 3 values (R, G, B)
 size_t width, height; // width and height of the image
 
 const int PROCESSES_COUNT = 10;
-size_t rCount = 0, gCount = 0, bCount = 0;
 
 void readBMP() {
     std::string filename = "red.bmp";
@@ -49,8 +50,9 @@ struct ProcessFunctionArgs {
 };
 
 
-void* ProcessFunction(ProcessFunctionArgs* structArgs) {
-    std::cout << "Thread ID: " << structArgs->threadId << std::endl;
+std::vector<int> ProcessFunction(ProcessFunctionArgs* structArgs) {
+    std::vector<int> rgbCount = {0, 0, 0}; // rCount, gCount, bCount
+//    std::cout << "Process ID: " << structArgs->threadId << std::endl;
 
     for (auto x = structArgs->widthStart; x < structArgs->widthEnd; x++)
     {
@@ -61,20 +63,20 @@ void* ProcessFunction(ProcessFunctionArgs* structArgs) {
             auto b = pixels[x][y][2];
 
             if (int(r) >= int(g) && int(r) >= int(b)) {
-                ++rCount;
+                ++rgbCount[0];
             }
             else if (int(g) >= int(r) && int(g) >= int(b)) {
-                ++gCount;
+                ++rgbCount[1];
             }
             else if (int(b) >= int(r) && int(b) >= int(g)) {
-                ++bCount;
+                ++rgbCount[2];
             }
             else {
                 // do nothing
             }
         }
     }
-    return 0;
+    return rgbCount;
 }
 
 int main(int argc, char** argv)
@@ -84,17 +86,17 @@ int main(int argc, char** argv)
     auto colStep = std::floor(width / PROCESSES_COUNT);
     auto remainder = width % PROCESSES_COUNT;
 
+    int fd[2]; // file descriptors
+
+    if (pipe(fd) == -1) {
+        std::cout << "Error occurred" << std::endl;
+    }
+
+    int zeros[3] = { };
+    write(fd[1], zeros, sizeof(int) * 3);
+
     for (int i = 0; i < PROCESSES_COUNT; i++) {
         pid_t pid = fork();
-
-        if (pid == -1) {
-            std::cerr << "Failed to create child process " << i << std::endl;
-            return 1; // Handle the error accordingly
-        } else if (pid == 0) {
-            // Child process logic
-            std::cout << "Hello from child process " << getpid() << std::endl;
-            return 0; // Terminate the child process
-        }
 
         auto start = i * colStep;
         auto end = (i + 1) * colStep;
@@ -105,24 +107,57 @@ int main(int argc, char** argv)
 
         int threadId = i + 1;
 
-        ProcessFunctionArgs* processFunctionArgs = new ProcessFunctionArgs();
+        if (pid == -1) {
+            std::cerr << "Failed to create child process " << i << std::endl;
+            return 1;
+        } else if (pid == 0) {
+            // std::cout << "Hello from child process " << getpid() << std::endl;
 
-        processFunctionArgs->threadId = threadId;
-        processFunctionArgs->widthStart = start;
-        processFunctionArgs->widthEnd = end;
-        processFunctionArgs->heightStart = 0;
-        processFunctionArgs->heightEnd = height;
+            ProcessFunctionArgs* processFunctionArgs = new ProcessFunctionArgs();
 
-        ProcessFunction(processFunctionArgs);
+            processFunctionArgs->threadId = threadId;
+            processFunctionArgs->widthStart = start;
+            processFunctionArgs->widthEnd = end;
+            processFunctionArgs->heightStart = 0;
+            processFunctionArgs->heightEnd = height;
+
+            auto rgbCount = ProcessFunction(processFunctionArgs);
+
+            int receivedRGBCount[3];
+
+            if (read(fd[0], receivedRGBCount, sizeof(int) * 3) < 0) {
+                return 1;
+            }
+            close(fd[0]);
+            for (int i = 0; i < 3; ++i) {
+                receivedRGBCount[i] += rgbCount[i];
+            }
+
+            write(fd[1], receivedRGBCount, sizeof(int) * 3);
+            close(fd[1]); // Close the write end of the pipe in the child process
+            kill(getpid(), SIGKILL);
+        }
     }
 
     for (int i = 0; i < PROCESSES_COUNT; i++) {
         wait(nullptr);
     }
 
-    std::cout << "R = " << rCount << std::endl;
-    std::cout << "G = " << gCount << std::endl;
-    std::cout << "B = " << bCount << std::endl;
+    close(fd[1]);
+
+    int buffer;
+    std::vector<int> receivedNumbers;
+    const int bufferSize = sizeof(int);
+
+    while (read(fd[0], &buffer, bufferSize) > 0) {
+        receivedNumbers.push_back(buffer);
+    }
+
+    close(fd[0]);
+
+    std::cout << "R = " << receivedNumbers[0] << std::endl;
+    std::cout << "G = " << receivedNumbers[1] << std::endl;
+    std::cout << "B = " << receivedNumbers[2] << std::endl;
 
     return 0;
 }
