@@ -2,71 +2,53 @@
 #include <stdio.h>
 #include <string>
 #include <iostream>
-#include <thread>
 #include <vector>
-#include <pthread.h>
 #include <cmath>
+#include <Windows.h>
+#include <fstream>
 #include "cbmp.h"
 
-std::vector<std::vector<std::vector<size_t>>> pixels; // each subvector is a pixels row vector that in turn is also a vector storing 3 values (R, G, B)
-size_t width, height; // width and height of the image
+const int PROCESSES_COUNT = 10;
 
-const int THREADS_COUNT = 10;
-size_t rCount = 0, gCount = 0, bCount = 0;
-
-pthread_t threads[THREADS_COUNT];
-int threadIds[THREADS_COUNT];
-pthread_mutex_t mutex;
-
-void readBMP() {
+void readBMP(int processId) {
     std::string filename = "red.bmp";
     BMP* bmp = bopen((char*)filename.c_str());
-    width = get_width(bmp), height = get_height(bmp);
+    size_t width = get_width(bmp);
+    size_t height = get_height(bmp);
 
     unsigned char r, g, b;
+    std::vector<std::vector<int>> pixels;
 
-    for (int x = width - 1; x >= 0; --x)
+    auto colStep = std::floor(width / PROCESSES_COUNT);
+    auto remainder = width % PROCESSES_COUNT;
+
+    int x = width - 1 - (colStep - 1) * processId;
+    int end_ = x - colStep + 1;
+
+    if (processId == PROCESSES_COUNT - 1) {
+        colStep += remainder;
+        x = colStep - 1;
+        end_ = 0;
+    }
+
+    /*
+    std::cout << "width: " << width << std::endl;
+    std::cout << "height: " << height << std::endl;
+    std::cout << "colStep: " << colStep << std::endl;
+
+
+    std::cout << "x: " << x << std::endl;
+    std::cout << "end: " << end_ << std::endl;
+    */
+
+    int rCount = 0, gCount = 0, bCount = 0;
+    for (; x >= end_; --x)
     {
-        std::vector<std::vector<size_t>> pixelsRow;
-
         for (int y = height - 1; y >= 0; --y)
         {
             get_pixel_rgb(bmp, x, y, &r, &g, &b);
-            std::vector<size_t> pixel = { r, g, b };
-            pixelsRow.push_back(pixel);
-
-            //std::cout << "R: " << int(r) << std::endl;
-            //std::cout << "G: " << int(g) << std::endl;
-            //std::cout << "B: " << int(b) << std::endl << std::endl;
-        }
-        pixels.push_back(pixelsRow);
-    }
-    bclose(bmp);
-}
-
-struct ThreadFunctionArgs {
-    int threadId;
-    size_t widthStart;
-    size_t widthEnd;
-    size_t heightStart;
-    size_t heightEnd;
-};
-
-
-void* ThreadFunction(void* arg) {
-    ThreadFunctionArgs* structArgs = (struct ThreadFunctionArgs*)arg;
-
-    std::cout << "Thread ID: " << structArgs->threadId << std::endl;
-
-    for (auto x = structArgs->widthStart; x < structArgs->widthEnd; x++)
-    {
-        for (auto y = structArgs->heightStart; y < structArgs->heightEnd; y++)
-        {
-            pthread_mutex_lock(&mutex);
-
-            auto r = pixels[x][y][0];
-            auto g = pixels[x][y][1];
-            auto b = pixels[x][y][2];
+            std::vector<int> pixel = { r, g, b };
+            pixels.push_back(pixel);
 
             if (int(r) >= int(g) && int(r) >= int(b)) {
                 ++rCount;
@@ -80,64 +62,108 @@ void* ThreadFunction(void* arg) {
             else {
                 // do nothing
             }
-
-            pthread_mutex_unlock(&mutex);
         }
     }
-    return 0;
+
+    bclose(bmp);
+
+    std::string outputFilePath = "files/ans_part" + std::to_string(processId) + ".txt";
+
+    /*
+    std::cout << "R: " << rCount << std::endl;
+    std::cout << "G: " << gCount << std::endl;
+    std::cout << "B: " << bCount << std::endl;
+    */
+
+    std::ofstream outputFile(outputFilePath);
+
+    if (outputFile.is_open()) {
+        outputFile << rCount << std::endl;
+        outputFile << gCount << std::endl;;
+        outputFile << bCount << std::endl;;
+        outputFile.close();
+    } else {
+        std::cout << "Error opening the file." << std::endl;
+    }
 }
 
-int main(int argc, char** argv)
+int main(int argc, TCHAR *argv[])
 {
-    readBMP();
+    if (argc == 1) {
+        // std::cout << argv[0] << std::endl;
+        HANDLE processHandles[PROCESSES_COUNT];
 
-    pthread_mutex_init(&mutex, NULL);
+        for (int i = 0; i < PROCESSES_COUNT; i++) {
+            STARTUPINFO si;
+            PROCESS_INFORMATION pi;
 
-    auto colStep = std::floor(width / THREADS_COUNT);
-    auto remainder = width % THREADS_COUNT;
+            ZeroMemory( &si, sizeof(si) );
+            si.cb = sizeof(si);
+            ZeroMemory( &pi, sizeof(pi) );
 
-    for (auto i = 0; i < THREADS_COUNT; ++i) {
-        auto start = i * colStep;
-        auto end = (i + 1) * colStep;
+            std::string path(argv[0]);
+            std::string commandLineArguments = path + " " + std::to_string(i);
+            // std::cout << "cl args: " << commandLineArguments.c_str() << std::endl;
 
-        if (i == THREADS_COUNT - 1) {
-            end += remainder;
+            if( !CreateProcess(NULL,   // No module name (use command line)
+                const_cast<LPSTR>(commandLineArguments.c_str()),        // Command line
+                NULL,           // Process handle not inheritable
+                NULL,           // Thread handle not inheritable
+                FALSE,          // Set handle inheritance to FALSE
+                0,              // No creation flags
+                NULL,           // Use parent's environment block
+                NULL,           // Use parent's starting directory
+                &si,            // Pointer to STARTUPINFO structure
+                &pi )           // Pointer to PROCESS_INFORMATION structure
+            )
+            {
+                std::cout << "CreateProcess failed with code " << GetLastError() << std::endl;
+                return 1;
+            }
+            processHandles[i] = pi.hProcess;
         }
 
-        int threadId = i + 1;
-        threadIds[i] = threadId;
+        // Wait for all processes to exit
+        WaitForMultipleObjects(PROCESSES_COUNT, processHandles, TRUE, INFINITE);
 
-        ThreadFunctionArgs* threadFunctionArgs = new ThreadFunctionArgs();
-
-        threadFunctionArgs->threadId = threadId;
-        threadFunctionArgs->widthStart = start;
-        threadFunctionArgs->widthEnd = end;
-        threadFunctionArgs->heightStart = 0;
-        threadFunctionArgs->heightEnd = height;
-
-        //std::cout << "Inside loop: " << threadFunctionArgs.threadId << std::endl;
-
-        int threadCreateResult = pthread_create(&threads[i], NULL, &ThreadFunction, threadFunctionArgs);
-
-        if (threadCreateResult != 0) {
-            std::cerr << "Failed to create thread " << i << std::endl;
-            return 1;
+        // Close process handles
+        for (int i = 0; i < PROCESSES_COUNT; ++i) {
+            CloseHandle( processHandles[i] );
         }
+
+        int rCount = 0, gCount = 0, bCount = 0;
+
+        for (int i = 0; i < PROCESSES_COUNT; ++i) {
+            std::string filePath = "files/ans_part" + std::to_string(i) + ".txt";
+            std::ifstream inputFile(filePath);   // Open the file for reading
+
+            if (inputFile.is_open()) {
+                std::string line;
+
+                std::getline(inputFile, line);
+                rCount += std::stoi(line);
+
+                std::getline(inputFile, line);
+                gCount += std::stoi(line);
+
+                std::getline(inputFile, line);
+                bCount += std::stoi(line);
+
+                inputFile.close();   // Close the file
+                // std::cout << "File read complete." << std::endl;
+            } else {
+                std::cout << "Error opening the file." << std::endl;
+            }
+        }
+        std::cout << "R: " << rCount << std::endl;
+        std::cout << "G: " << gCount << std::endl;
+        std::cout << "B: " << bCount << std::endl;
+
+    } else {
+        int processId = std::stoi(std::string(argv[1]));
+        // std::cout << processId << std::endl;
+        readBMP(processId);
+        return 0;
     }
 
-    for (int i = 0; i < THREADS_COUNT; ++i) {
-        int threadJoinResult = pthread_join(threads[i], NULL);
-        if (threadJoinResult != 0) {
-            std::cerr << "Failed to join thread " << i << std::endl;
-            return 1; // Handle the error accordingly
-        }
-    }
-
-    pthread_mutex_destroy(&mutex);
-
-    std::cout << "R = " << rCount << std::endl;
-    std::cout << "G = " << gCount << std::endl;
-    std::cout << "B = " << bCount << std::endl;
-
-    return 0;
 }
