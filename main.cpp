@@ -77,32 +77,32 @@ int main(int argc, char** argv) {
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
   std::vector<int> localRgbCount = readBMP(world_rank);
+  int* rgbCountList = nullptr;
+
   if (world_rank == 0) {
-    for (int i = 1; i < PROCESSES_COUNT; ++i) {
-        int receivedRgb[3];
-        MPI_Recv(
-          /* data         = */ receivedRgb,
-          /* count        = */ 3,
-          /* datatype     = */ MPI_INT,
-          /* source       = */ i,
-          /* tag          = */ 0,
-          /* communicator = */ MPI_COMM_WORLD,
-          /* status       = */ MPI_STATUS_IGNORE);
-        localRgbCount[0] += receivedRgb[0];
-        localRgbCount[1] += receivedRgb[1];
-        localRgbCount[2] += receivedRgb[2];
-    }
-    std::cout << "R = " << localRgbCount[0]<< std::endl;
-    std::cout << "G = " << localRgbCount[1] << std::endl;
-    std::cout << "B = " << localRgbCount[2]<< std::endl;
-  } else {
-    MPI_Send(
-      /* data         = */ localRgbCount.data(),
-      /* count        = */ 3,
-      /* datatype     = */ MPI_INT,
-      /* destination  = */ 0,
-      /* tag          = */ 0,
-      /* communicator = */ MPI_COMM_WORLD);
+    rgbCountList = new int[PROCESSES_COUNT * 3];
   }
+
+  MPI_Gather(localRgbCount.data(), localRgbCount.size(), MPI_INT, rgbCountList, localRgbCount.size(), MPI_INT, 0,
+           MPI_COMM_WORLD);
+
+    if (world_rank == 0) {
+        int rCount = 0;
+        int gCount = 0;
+        int bCount = 0;
+
+        // std::cout << "test" << std::endl;
+
+        for (int i = 0; i < PROCESSES_COUNT * 3; i += 3) {
+            rCount += rgbCountList[i];
+            gCount += rgbCountList[i + 1];
+            bCount += rgbCountList[i + 2];
+        }
+
+        std::cout << "R = " << rCount << std::endl;
+        std::cout << "G = " << gCount << std::endl;
+        std::cout << "B = " << bCount << std::endl;
+    }
+
   MPI_Finalize();
 }
